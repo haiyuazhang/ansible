@@ -746,6 +746,13 @@ class AzureRMModuleBase(object):
 
         # wrap basic strings in a dict that just defines the default
         return dict(default_api_version=profile_raw)
+    def get_graphrbac_client(self, tenant_id):
+        from azure.graphrbac import GraphRbacManagementClient
+        cred = self.azure_auth.azure_credentials
+        base_url = self.azure_auth._cloud_environment.endpoints.active_directory_graph_resource_id
+        client = GraphRbacManagementClient(cred, tenant_id, base_url)
+
+        return client
 
     def get_mgmt_svc_client(self, client_type, base_url=None, api_version=None):
         self.log('Getting management service client {0}'.format(client_type.__name__))
