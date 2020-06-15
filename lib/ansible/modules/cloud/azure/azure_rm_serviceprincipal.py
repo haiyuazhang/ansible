@@ -42,8 +42,9 @@ class Actions:
 class AzureRMServicePrincipal(AzureRMModuleBaseExt):
     def __init__(self):
 
-        self.module_arge_spec = dict(
-
+        self.module_arg_spec = dict(
+            app_id=dict(type='str', required=True),
+            tenant_id=dict(type='str')
         )
 
         self.resource_group = None
@@ -60,13 +61,13 @@ class AzureRMServicePrincipal(AzureRMModuleBaseExt):
                                             
     def exec_module(self, **kwargs):
 
-        for key in list(self.module_arge_spec.keys()):
+        for key in list(self.module_arg_spec.keys()):
             setattr(self, key, kwargs[key])
 
-        resource_group = self.get_resource_group(self.resource_group)
+        # resource_group = self.get_resource_group(self.resource_group)
 
         to_be_update = False
-        response = self.get()
+        response = self.get_resource()
 
         if response:
             if self.state == 'present':
@@ -93,7 +94,7 @@ class AzureRMServicePrincipal(AzureRMModuleBaseExt):
             self.results['changed'] = True
             if self.check_mode:
                 return self.results
-            response = self.delete_traffic_manager_endpoint()
+            response = self.delete_resource()
 
         return self.results
 
@@ -119,7 +120,7 @@ class AzureRMServicePrincipal(AzureRMModuleBaseExt):
     def get_resource(self):
         try:
             client = self.get_graphrbac_client(self.tenant_id)
-            result = list(client.list(filter="servicePrincipalNames/any(c:c eq '{}')".format(self.app_id)))
+            result = list(client.service_principals.list(filter="servicePrincipalNames/any(c:c eq '{}')".format(self.app_id)))
             return result
         except CloudError as e:
             self.log('Did not find the instance.')

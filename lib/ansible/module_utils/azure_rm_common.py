@@ -746,6 +746,7 @@ class AzureRMModuleBase(object):
 
         # wrap basic strings in a dict that just defines the default
         return dict(default_api_version=profile_raw)
+        
     def get_graphrbac_client(self, tenant_id):
         from azure.graphrbac import GraphRbacManagementClient
         cred = self.azure_auth.azure_credentials
