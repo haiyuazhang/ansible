@@ -24,13 +24,11 @@ RETURN = '''
 
 '''
 
-import time
-import json
 from ansible.module_utils.azure_rm_common_ext import AzureRMModuleBaseExt
-from ansible.module_utils.azure_rm_common_rest import GenericRestClient
 
 try:
     from msrestazure.azure_exceptions import CloudError
+    from azure.graphrbac.models import GraphErrorException
 except ImportError:
     # This is handled in azure_rm_common
     pass
@@ -44,87 +42,104 @@ class AzureRMServicePrincipal(AzureRMModuleBaseExt):
 
         self.module_arg_spec = dict(
             app_id=dict(type='str', required=True),
-            tenant_id=dict(type='str')
+            tenant=dict(type='str', required=True),
+            state=dict(type='str', default='present', choices=['present', 'absent']),
+            app_role_assignment_required=dict(type='bool')
         )
 
-        self.resource_group = None
         self.state = None
-        self.tenant_id = None
+        self.tenant = None
         self.app_id = None
-
+        self.app_role_assignment_required = None
+        self.object_id = None
         self.results = dict(changed=False)
-        self.action = Actions.NoAction
 
         super(AzureRMServicePrincipal, self).__init__(derived_arg_spec=self.module_arg_spec,
                                                       supports_check_mode=False,
-                                                      supports_tags=False)
+                                                      supports_tags=False,
+                                                      is_ad_resource=True)
                                             
     def exec_module(self, **kwargs):
 
         for key in list(self.module_arg_spec.keys()):
             setattr(self, key, kwargs[key])
 
-        # resource_group = self.get_resource_group(self.resource_group)
-
-        to_be_update = False
         response = self.get_resource()
 
         if response:
             if self.state == 'present':
-                to_be_update = self.check_update(response)
-                if to_be_update:
-                    self.action = Actions.CreateOrUpdate
+                if self.check_update(response):
+                    self.update_resource(response)
             elif self.state == 'absent':
-                self.action = Actions.Delete
+                    self.delete_resource(response)
         else:
             if self.state == 'present':
-                self.action = Actions.CreateOrUpdate
+                self.create_resource()
             elif self.state == 'absent':
-                # delete when no exists
-                self.fail("resource {0} not exists.".format(self.app_id))
-
-        if self.action == Actions.CreateOrUpdate:
-            self.results['changed'] = True
-            if self.check_mode:
-                return self.results
-
-            response = self.create_or_update()
-        
-        if self.action == Actions.Delete:
-            self.results['changed'] = True
-            if self.check_mode:
-                return self.results
-            response = self.delete_resource()
+                self.log("try to delete non exist resource")
 
         return self.results
 
-    def create_or_update(self):
+    def create_resource(self):
         from azure.graphrbac.models import ServicePrincipalCreateParameters
         try:
-            client = self.get_graphrbac_client(self.tenant_id)
+            client = self.get_graphrbac_client(self.tenant)
             response = client.service_principals.create(ServicePrincipalCreateParameters(app_id=self.app_id, account_enabled=True))
-
+            self.results['changed'] = True
+            self.results.update(self.to_dict(response))
             return response
-        except CloudError as ce:
-            self.fail("Error creating service principle, app id {0} - {1}".format(self.app_id), str(ce))
+        except GraphErrorException as ge:
+            self.fail("Error creating service principle, app id {0} - {1}".format(self.app_id), str(ge))
 
-    def delete_resource(self):
+    def update_resource(self, old_response):
         try:
-            client = self.get_graphrbac_client(self.tenant_id)
-            client.applications.delete(self.app_id)
+            from azure.graphrbac.models import ServicePrincipalUpdateParameters
+            client = self.get_graphrbac_client(self.tenant)
+            to_update = {}
+            if self.app_role_assignment_required is not None:
+                to_update['app_role_assignment_required'] = self.app_role_assignment_required
+
+            client.service_principals.update(old_response['object_id'], to_update)
+            self.results['changed'] = True
+            self.results.update(self.get_resource())
+
+        except GraphErrorException as ge:
+            self.fail("Error deleting service principal app_id {0} - {1}".format(self.app_id, str(ge)))
+
+    def delete_resource(self, response):
+        try:
+            client = self.get_graphrbac_client(self.tenant)
+            client.service_principals.delete(response.get('object_id'))
+            self.results['changed'] = True
             return True
-        except CloudError as ce:
-            self.fail("Error deleting service principal app_id {0} - {1}".format(self.app_id, str(ce)))
-            return False
+        except GraphErrorException as ge:
+            self.fail("Error deleting service principal app_id {0} - {1}".format(self.app_id, str(ge)))
 
     def get_resource(self):
         try:
-            client = self.get_graphrbac_client(self.tenant_id)
+            client = self.get_graphrbac_client(self.tenant)
             result = list(client.service_principals.list(filter="servicePrincipalNames/any(c:c eq '{}')".format(self.app_id)))
-            return result
-        except CloudError as e:
-            self.log('Did not find the instance.')
+            if not result:
+                return False
+            result = result[0]
+            return self.to_dict(result)
+        except GraphErrorException as ge:
+            self.log("Did not find the graph instance instance {0} - {1}".format(self.app_id, str(ge)))
             return False
+
+    def check_update(self, response):
+        app_assignment_changed = self.app_role_assignment_required is not None and self.app_role_assignment_required != response.get('app_role_assignment_required', None)
+        to_be_update = False or app_assignment_changed
+
+        return to_be_update
+
+    def to_dict(self, object):
+        return dict(
+            app_id = object.app_id,
+            object_id = object.object_id,
+            app_display_name = object.display_name,
+            app_role_assignment_required= object.app_role_assignment_required
+        )
 
 
 def main():
