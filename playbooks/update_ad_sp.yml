@@ -2,7 +2,7 @@
   connection: local
   tasks:
   - name: update  ad sp
-    azure_rm_serviceprincipal:
+    azure_ad_serviceprincipal:
       app_id: d5a64010-3334-464f-8720-8ad850437eec
       state: present
       app_role_assignment_required: true 
