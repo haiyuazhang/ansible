@@ -121,7 +121,8 @@ class AzureADPasswordInfo(AzureRMModuleBase):
         return dict(
             end_date=pd.end_date,
             start_date=pd.start_date,
-            key_id=pd.key_id
+            key_id=pd.key_id,
+            custom_key_identifier=str(pd.custom_key_identifier)
         )
 
 def main():
