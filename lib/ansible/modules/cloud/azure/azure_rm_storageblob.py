@@ -206,6 +206,8 @@ class AzureRMStorageBlob(AzureRMModuleBase):
             force=dict(type='bool', default=False),
             resource_group=dict(required=True, type='str', aliases=['resource_group_name']),
             src=dict(type='str', aliases=['source']),
+            src_dir=dict(type='str', aliases=['source_directory']),
+            bulk_upload_root=dict(type='str'),
             state=dict(type='str', default='present', choices=['absent', 'present']),
             public_access=dict(type='str', choices=['container', 'blob']),
             content_type=dict(type='str'),
@@ -230,9 +232,12 @@ class AzureRMStorageBlob(AzureRMModuleBase):
         self.force = None
         self.resource_group = None
         self.src = None
+        self.src_dir = None
+        self.bulk_upload_root = None
         self.state = None
         self.tags = None
         self.public_access = None
+        self.source_directory = None
         self.results = dict(
             changed=False,
             actions=[],
@@ -257,9 +262,6 @@ class AzureRMStorageBlob(AzureRMModuleBase):
         self.blob_client = self.get_blob_client(self.resource_group, self.storage_account_name, self.blob_type)
         self.container_obj = self.get_container()
 
-        if self.blob is not None:
-            self.blob_obj = self.get_blob()
-
         if self.state == 'present':
             if not self.container_obj:
                 # create the container
@@ -269,9 +271,14 @@ class AzureRMStorageBlob(AzureRMModuleBase):
                 update_tags, self.container_obj['tags'] = self.update_tags(self.container_obj.get('tags'))
                 if update_tags:
                     self.update_container_tags(self.container_obj['tags'])
+            
+            if self.src_dir:
+                self.bulk_upload()
+                return self.results
 
             if self.blob:
                 # create, update or download blob
+                self.blob_obj = self.get_blob()
                 if self.src and self.src_is_valid():
                     if self.blob_obj and not self.force:
                         self.log("Cannot upload to {0}. Blob with that name already exists. "
@@ -306,6 +313,79 @@ class AzureRMStorageBlob(AzureRMModuleBase):
         # until we sort out how we want to do this globally
         del self.results['actions']
         return self.results
+
+    def bulk_upload(self):
+        import os
+
+        def _glob_files_locally(folder_path):
+
+            len_folder_path = len(folder_path) + 1
+
+            for root, _, files in os.walk(folder_path):
+                for f in files:
+                    full_path = os.path.join(root, f)
+                    yield (full_path, full_path[len_folder_path:])
+
+
+        def _normalize_blob_file_path(path, name):
+            path_sep = '/'
+            if path:
+                name = path_sep.join((path, name))
+
+            return path_sep.join(os.path.normpath(name).split(os.path.sep)).strip(path_sep)
+
+        def _guess_content_type(file_path, original):
+            if original.content_encoding or original.content_type:
+                return original
+
+            import mimetypes
+            mimetypes.add_type('application/json', '.json')
+            mimetypes.add_type('application/javascript', '.js')
+            mimetypes.add_type('application/wasm', '.wasm')
+
+            content_type, _ = mimetypes.guess_type(file_path)
+            return ContentSettings(
+                content_type=content_type,
+                content_encoding=original.content_encoding,
+                content_disposition=original.content_disposition,
+                content_language=original.content_language,
+                content_md5=original.content_md5,
+                cache_control=original.cache_control)
+
+        if not os.path.exists(self.src_dir):
+            self.fail("source directory {} does not exist".format(self.source_directory))
+        
+        if not os.path.isdir(self.src_dir):
+            self.fail("incorrect usage: {} is not a direcotry".format(self.source_directory))
+        
+        source_dir = os.path.realpath(self.src_dir)
+        source_files = [c for c in _glob_files_locally(source_dir)]
+        
+        content_settings = ContentSettings(
+                content_type=self.content_type,
+                content_encoding=self.content_encoding,
+                content_language=self.content_language,
+                content_disposition=self.content_disposition,
+                cache_control=self.cache_control,
+                content_md5=self.content_md5)
+        
+        if not self.check_mode:
+            for src, blob_path in source_files:
+                if self.bulk_upload_root:
+                    blob_path = _normalize_blob_file_path(self.bulk_upload_root, blob_path)
+                try:
+                    if not os.path.exists(src):
+                        self.fail("src does not exists: {}".format(src))
+                    self.blob_client.create_blob_from_path(self.container, blob_path, src,
+                                                       metadata=self.tags, content_settings=_guess_content_type(src, content_settings))
+                    self.results['actions'].append('created blob from {0}'.format(src))
+
+                except AzureHttpError as exc:
+                    self.fail("Error creating blob {0} - {1}".format(src, str(exc)))
+
+        self.results['changed'] = True
+        self.results['container'] = self.container_obj
+
 
     def get_container(self):
         result = {}

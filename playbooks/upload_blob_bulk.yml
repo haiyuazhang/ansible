@@ -6,8 +6,6 @@
       resource_group: zhytest
       storage_account_name: zhytest
       container: foo
-      src: /tmp/bar/2.txt
-      blob: 2.txt
+      src_dir: /tmp/azure
+      bulk_upload_root: azure
       public_access: container
-      content_type: 'text/html'
-  

@@ -6,8 +6,8 @@
       resource_group: zhytest
       storage_account_name: zhytest
       container: foo
-      src: /tmp/bar/2.txt
-      blob: 2.txt
+      src: /tmp/foo.txt
+      blob: dir/foo.txt
       public_access: container
       content_type: 'text/html'
   
